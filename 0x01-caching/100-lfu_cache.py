@@ -1,53 +1,41 @@
 #!/usr/bin/env python3
-"""
-LFU caching module
-"""
+""" caching system
+    """
+
 from base_caching import BaseCaching
-from typing import Any, Optional
 
 
 class LFUCache(BaseCaching):
-    """ LFU cache class
+    """ caching system:
+
+    Args:
+        LFUCache ([class]): [basic caching]
     """
-    def __init__(self):
-        """ Initializes new instance
-        """
+
+    def __init__(self) -> None:
+        """ initialize of class """
+        self.temp_list = {}
         super().__init__()
-        self.counter = {}
 
-    def put(self, key: Any, item: Any) -> None:
-        """ Adds data to cache based on LRU policy
-            - Args:
-                - key: new entry's key
-                - item: entry's value
+    def put(self, key, item):
+        """ Add an item in the cache
         """
-        if not key or not item:
-            return
-        counter = self.counter
-        new_cache_data = {key: item}
-        old_cache_data = self.cache_data.get(key)
-        if len(self.cache_data) == self.MAX_ITEMS and not old_cache_data:
-            key_to_remove = list(counter.keys())[0]
-            self.cache_data.pop(key_to_remove)
-            counter.pop(key_to_remove)
-            print(f'DISCARD: {key_to_remove}')
-        self.cache_data.update(new_cache_data)
-        counter.update({key: counter.get(key, 0) + 1})
-        counter = dict(sorted(counter.items(),
-                              key=lambda x: (x[1], x[0])))
+        if not (key is None or item is None):
+            self.cache_data[key] = item
+            if len(self.cache_data.keys()) > self.MAX_ITEMS:
+                pop = min(self.temp_list, key=self.temp_list.get)
+                self.temp_list.pop(pop)
+                self.cache_data.pop(pop)
+                print(f"DISCARD: {pop}")
+            if not (key in self.temp_list):
+                self.temp_list[key] = 0
+            else:
+                self.temp_list[key] += 1
 
-    def get(self, key: Any) -> Optional[Any]:
-        """ Gets cache data associated with given key
-            and updates dict in accordance to LFU policy
-            - Args:
-                - key to look for
-            - Return:
-                - value associated with the key
+    def get(self, key):
+        """ Get an item by key
         """
-        cache_item = self.cache_data.get(key)
-        counter = self.counter
-        if cache_item:
-            counter.update({key: counter.get(key) + 1})
-            counter = dict(sorted(counter.items(),
-                                  key=lambda x: (x[1], x[0])))
-        return cache_item
+        if (key is None) or not (key in self.cache_data):
+            return None
+        self.temp_list[key] += 1
+        return self.cache_data.get(key)
