@@ -3,71 +3,79 @@ import { createQueue } from 'kue';
 import { promisify } from 'util';
 import express from 'express';
 
-const app = express();
-const client = createClient();
-const queue = createQueue();
-const HOST = '127.0.0.1';
-const PORT = 1245;
+//create redis client
+const redisClient = createClient();
+
+redisClient.on('connect', function() {
+  console.log('Redis client connected to the server');
+});
+
+redisClient.on('error', function (err) {
+  console.log(`Redis client not connected to the server: ${err}`);
+});
+
+//promisify client.get function
+const asyncGet = promisify(redisClient.get).bind(redisClient);
+
+function reserveSeat(number) {
+  redisClient.set('available_seats', number);
+}
+
+async function getCurrentAvailableSeats() {
+  const seats = await asyncGet('available_seats');
+  return seats;
+}
+
 let reservationEnabled = true;
 
-// Redis client ops
-/**
- * Sets the number of available seats from Redis
- * @param {number} number -
- */
-function reserveSeat(number) {
-  client.set('available_seats', number);
-}
+//create Kue queue
+const queue = createQueue();
 
-/**
- * Queries redis for number of available seats
- * @returns {number} number of available seats
- */
-async function getCurrentAvailableSeats() {
-  const getAsync = promisify(client.get).bind(client);
-  const availableSeats = await getAsync('available_seats');
-  return Number(availableSeats);
-}
+//create express app
+const app = express();
 
-// Express app routes
-/* Gets number of available seats */
-app.get('/available_seats', async (req, res) => {
+app.get('/available_seats', async function (req, res) {
   const availableSeats = await getCurrentAvailableSeats();
-  res.send({ numberOfAvailableSeats: availableSeats });
+  res.json({"numberOfAvailableSeats": availableSeats});
 });
 
-/* Enqueues seat reservation process */
-app.get('/reserve_seat', (_req, res) => {
+app.get('/reserve_seat', function (req, res) {
   if (!reservationEnabled) {
-    res.send({ status: 'Reservation are blocked' });
+    res.json({"status": "Reservation are blocked"});
     return;
   }
-  res.send({ status: 'Reservation in process' });
-  const reserveSeatJob = queue.create('reserve_seat').save();
-  reserveSeatJob.on('complete', () => {
-    console.log(`Seat reservation job ${reserveSeatJob.id} completed`);
-  });
-  reserveSeatJob.on('failed', (errorMessage) => {
-    console.log(`Seat reservation job ${reserveSeatJob.id} failed ${errorMessage}`);
-  });
-});
-
-/* Processes seats reservation jobs */
-app.get('/process', (_req, res) => {
-  queue.process('reserve_seat', async (_job, done) => {
-    let availableSeats = await getCurrentAvailableSeats();
-    if (!availableSeats) {
-      done(new Error('Not enough seats available'));
+  const job = queue.create('reserve_seat', {'seat': 1}).save((error) => {
+    if (error) {
+      res.json({"status": "Reservation failed"});
       return;
+    } else {
+      res.json({"status": "Reservation in process"});
+      job.on('complete', function () {
+      console.log(`Seat reservation job ${job.id} completed`);
+      });
+      job.on('failed', function(error) {
+        console.log(`Seat reservation job ${job.id} failed: ${error}`);
+      });
     }
-    availableSeats -= 1;
-    reserveSeat(availableSeats);
-    if (!availableSeats) reservationEnabled = false;
-    done();
   });
-  res.send({ status: 'Queue processing' });
 });
 
-app.listen(PORT, HOST, () => {
-  console.log(`Server is live at ${HOST}:${PORT}`);
+app.get('/process', function (req, res) {
+    res.json({"status": "Queue processing"});
+    queue.process('reserve_seat', async function(job, done) {
+	const seat = Number(await getCurrentAvailableSeats());
+	if (seat === 0) {
+	    reservationEnabled = false;
+	    done(Error('Not enough seats available'));
+	} else {
+	    reserveSeat(seat - 1);
+	    done();
+	}
+    });
 });
+
+const port = 1245;
+app.listen(port, () => {
+    console.log(`app is listening http://localhost:${port}`);
+});
+reserveSeat(50);
